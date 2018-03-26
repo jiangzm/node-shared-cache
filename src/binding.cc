@@ -18,6 +18,8 @@
 
 
 #define CACHE_HEADER_IN_WORDS   131080
+#define MAX_HANDLES 2048
+#define HANDLE_TO_INT_ERROR 65535
 
 using namespace v8;
 
@@ -27,13 +29,8 @@ using namespace v8;
     return Nan::ThrowError(sbuf);\
 }
 
-#ifndef _WIN32
 #define METHOD_SCOPE(holder, ptr, fd) void* ptr = Nan::GetInternalFieldPointer(holder, 0);\
-    HANDLE fd = holder->GetInternalField(1)->Int32Value()
-#else
-#define METHOD_SCOPE(holder, ptr, fd) void* ptr = Nan::GetInternalFieldPointer(holder, 0);\
-    HANDLE fd = reinterpret_cast<HANDLE>(holder->GetInternalField(1)->IntegerValue())
-#endif
+    HANDLE fd = intToHandle(holder->GetInternalField(1)->Int32Value())
 
 #define PROPERTY_SCOPE(property, holder, ptr, fd, keyLen, keyBuf) int keyLen = property->Length();\
     if(keyLen > 256) {\
@@ -46,6 +43,21 @@ using namespace v8;
     uint16_t keyBuf[256];\
     property->Write(keyBuf)
 
+uint32_t handleIdx = 0;
+HANDLE handlers[MAX_HANDLES];
+
+uint32_t handleToInt (HANDLE handle) {
+	if (handleIdx >= MAX_HANDLES) {
+		return HANDLE_TO_INT_ERROR;
+	} else {
+		handlers[handleIdx] = handle;
+		return handleIdx ++;
+	}
+}
+
+HANDLE intToHandle (uint32_t idx) {
+	return handlers[idx];
+}
 
 static NAN_METHOD(release) {
 #ifndef _WIN32
@@ -125,7 +137,11 @@ static NAN_METHOD(create) {
         FATALIF(fd = open(sbuf, O_CREAT | O_RDONLY, 0400), -1, open);
 #endif
 
-        info.Holder()->SetInternalField(1, Nan::New(fd));
+        uint32_t fdInt = handleToInt(fd);
+        if (fdInt == HANDLE_TO_INT_ERROR){
+           Nan::ThrowError("max mutex exceed");
+        }
+        info.Holder()->SetInternalField(1, Nan::New(fdInt));
     }
     else {
         Nan::ThrowError("cache initialization failed, maybe it has been initialized with different block size");
