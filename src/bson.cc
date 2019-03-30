@@ -1,7 +1,9 @@
+#pragma warning(disable : 4996)
+
 #include "bson.h"
 
-#include<nan.h>
-#include<string.h>
+#include <nan.h>
+#include <string.h>
 
 typedef struct object_wrapper_s {
     v8::Handle<v8::Object> object;
@@ -43,8 +45,10 @@ typedef struct writer_s {
         uint8_t* old_pointer = current - used;
         memcpy(new_pointer, old_pointer, used);
 
-        if(deleteOld) delete[] old_pointer;
-        else deleteOld = true;
+        if (deleteOld)
+            delete[] old_pointer;
+        else
+            deleteOld = true;
 
         current = new_pointer + used;
 
@@ -67,11 +71,19 @@ typedef struct writer_s {
         if(value->IsString()) {
             *(current++) = bson::String;
             Local<String> str = value->ToString();
+#if (NODE_MODULE_VERSION > NODE_0_10_MODULE_VERSION)
+            size_t len = str->Utf8Length();
+#else
             size_t len = str->Length() << 1;
+#endif
             ensureCapacity(sizeof(uint32_t) + len);
             *reinterpret_cast<uint32_t*>(current) = len;
             current += sizeof(uint32_t);
+#if (NODE_MODULE_VERSION > NODE_0_10_MODULE_VERSION)
+            str->WriteUtf8(reinterpret_cast<char*>(current));
+#else
             str->Write(reinterpret_cast<uint16_t*>(current));
+#endif
             current += len;
         } else if(value->IsNull()) {
             *(current++) = bson::Null;
@@ -113,6 +125,16 @@ typedef struct writer_s {
                 for(uint32_t i = 0; i < len; i++) {
                     // fprintf(stderr, "write array[%d] (len=%d)\n", i, len);
                     write(arr->Get(i));
+                }
+            } else if (node::Buffer::HasInstance(value)) {
+                *(current++) = bson::Buffer;
+                char* data = node::Buffer::Data(value);
+                uint32_t len = node::Buffer::Length(value);
+                ensureCapacity(sizeof(uint32_t) + len);
+                *reinterpret_cast<uint32_t*>(current) = len;
+                current += sizeof(uint32_t);
+                for (uint32_t i = 0; i < len; i++) {
+                    *(current++) = data[i];
                 }
             } else { // TODO: support for other object types
                 *(current++) = bson::Object;
@@ -177,7 +199,7 @@ static v8::Local<v8::Value> parse(const uint8_t*& data, object_wrapper_t*& objec
         tmp = data += sizeof(uint32_t);
         data += len;
 #if (NODE_MODULE_VERSION > NODE_0_10_MODULE_VERSION)
-        return v8::String::NewFromTwoByte(Isolate::GetCurrent(), reinterpret_cast<const uint16_t*>(tmp), v8::String::kNormalString, len >> 1);
+        return v8::String::NewFromUtf8(Isolate::GetCurrent(), reinterpret_cast<const char*>(tmp), v8::String::kNormalString, len);
 #else
         return v8::String::New(reinterpret_cast<const uint16_t*>(tmp), len >> 1);
 #endif
@@ -215,6 +237,17 @@ static v8::Local<v8::Value> parse(const uint8_t*& data, object_wrapper_t*& objec
                 curr = curr->next;
             }
             return curr->object;
+        }
+    case bson::Buffer:
+        len = *reinterpret_cast<const uint32_t*>(data);
+        data += sizeof(uint32_t); {
+            char* retval = new char[len];
+            for (uint32_t i = 0; i < len; i++) {
+                retval[i] = data[i];
+            }
+
+            Local<Object> obj = Nan::NewBuffer(retval, len).ToLocalChecked();
+            return obj;
         }
     }
     assert("should not reach here");

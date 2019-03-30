@@ -4,7 +4,7 @@
   "description": "Interprocess shared memory cache for Node.JS",
   "main": "index.js",
   "dependencies": {
-    "nan": "~2.4.0"
+    "nan": "^2.13.2"
   },
   "devDependencies": {},
   "scripts": {
