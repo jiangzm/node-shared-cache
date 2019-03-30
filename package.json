@@ -9,7 +9,7 @@
   "devDependencies": {},
   "scripts": {
     "test": "node test/test",
-    "install": "node-gyp rebuild"
+    "install": "node scripts/install"
   },
   "repository": {
     "type": "git",
