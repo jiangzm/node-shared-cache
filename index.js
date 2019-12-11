@@ -1,6 +1,16 @@
-var crypto = require('crypto');
+const crypto = require('crypto');
+
+function md5() {
+  let md5sum = crypto.createHash('md5');
+  md5sum.update(str);
+  return md5sum.digest('hex');
+}
 
 process.dlopen(module, require.resolve('./build/Release/binding.node'));
+
+const NativeCache = exports.Cache;
+
+let cacheMap = {};
 
 exports.SIZE_DEFAULT = 6;
 exports.SIZE_64 = 6;
@@ -13,28 +23,17 @@ exports.SIZE_4K = 12;
 exports.SIZE_8K = 13;
 exports.SIZE_16K = 14;
 
-var NativeCache = exports.Cache;
-
-var cacheNameMap = {};
-
-function md5 () {
-	var md5sum = crypto.createHash('md5');
-	md5sum.update(str);
-	return md5sum.digest('hex');
-}
-
-function Cache (name, size, blockSize) {
-	var md5Name;
-	if (cacheNameMap.hasOwnProperty(name)) {
-		md5Name = cacheNameMap[name];
-	} else {
-		md5Name = md5(name).slice(8, 24);
-	}
-	return new NativeCache(md5Name, size, blockSize);
+function Cache(name, size, blockSize) {
+  blockSize = blockSize || exports.SIZE_DEFAULT;
+  let md5Name = md5(process.version + '_' + os.platform() + '_' + os.arch() + '_' + name + '_' + size + '_' + blockSize).slice(8, 24);
+  if (!Object.prototype.hasOwnProperty.call(cacheMap, md5Name)) {
+    cacheMap[md5Name] = new NativeCache(md5Name, size, blockSize);
+  }
+  return cacheMap[md5Name];
 }
 
 exports.Cache = Cache;
 
-if(process.mainModule === module && process.argv[2] === 'release') {
-	process.argv.slice(3).forEach(exports.release);
+if (process.mainModule === module && process.argv[2] === 'release') {
+  process.argv.slice(3).forEach(exports.release);
 }
