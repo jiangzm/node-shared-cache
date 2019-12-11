@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/kyriosli/node-shared-cache.git"
+    "url": "https://github.com/everplus/node-shared-cache.git"
   },
   "keywords": [
     "Node.JS",
@@ -25,7 +25,7 @@
   "license": "ISC",
   "gypfile": true,
   "bugs": {
-    "url": "https://github.com/kyriosli/node-shared-cache/issues"
+    "url": "https://github.com/everplus/node-shared-cache/issues"
   },
-  "homepage": "https://github.com/kyriosli/node-shared-cache"
+  "homepage": "https://github.com/everplus/node-shared-cache"
 }
