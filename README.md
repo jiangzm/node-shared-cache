@@ -6,6 +6,7 @@ It supports auto memory-management and fast object serialization. It uses a hash
 
 ## Updates
 
+  - 1.7.0 Only Support Node.JS 12+
   - 1.6.2
     - Add `exchange` method which can be used as atomic lock as well as `increase`
     - Add `fastGet` method which does not touch the LRU sequence
