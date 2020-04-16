@@ -74,7 +74,7 @@ HANDLE intToHandle(uint32_t idx)
 static NAN_METHOD(release)
 {
 #ifndef _WIN32
-    FATALIF(shm_unlink(*String::Utf8Value(info[0])), -1, shm_unlink);
+    FATALIF(shm_unlink(*String::Utf8Value(info.GetIsolate(), info[0])), -1, shm_unlink);
 #endif
 }
 
