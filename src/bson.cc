@@ -80,19 +80,11 @@ typedef struct writer_s
         {
             *(current++) = bson::String;
             Local<String> str = value->ToString(Nan::GetCurrentContext()).ToLocalChecked();
-#if (NODE_MODULE_VERSION > NODE_0_10_MODULE_VERSION)
-            size_t len = str->Utf8Length(Nan::GetCurrentContext()->GetIsolate());
-#else
-            size_t len = str->Length() << 1;
-#endif
+            size_t len = str->Utf8Length(Nan::GetCurrentContext()->GetIsolate()) + 1;
             ensureCapacity(sizeof(uint32_t) + len);
             *reinterpret_cast<uint32_t *>(current) = len;
             current += sizeof(uint32_t);
-#if (NODE_MODULE_VERSION > NODE_0_10_MODULE_VERSION)
             str->WriteUtf8(Nan::GetCurrentContext()->GetIsolate(), reinterpret_cast<char *>(current), -1, nullptr, 0);
-#else
-            str->Write(reinterpret_cast<uint16_t *>(current));
-#endif
             current += len;
         }
         else if (value->IsNull())
@@ -234,11 +226,7 @@ static v8::Local<v8::Value> parse(const uint8_t *&data, object_wrapper_t *&objec
         len = *reinterpret_cast<const uint32_t *>(data);
         tmp = data += sizeof(uint32_t);
         data += len;
-#if (NODE_MODULE_VERSION > NODE_0_10_MODULE_VERSION)
-        return v8::String::NewFromUtf8(Isolate::GetCurrent(), reinterpret_cast<const char *>(tmp), v8::NewStringType::kNormal, len).ToLocalChecked();
-#else
-        return v8::String::New(reinterpret_cast<const uint16_t *>(tmp), len >> 1);
-#endif
+        return v8::String::NewFromUtf8(Isolate::GetCurrent(), reinterpret_cast<const char *>(tmp), v8::NewStringType::kNormal, len - 1).ToLocalChecked();
     case bson::Array:
         len = *reinterpret_cast<const uint32_t *>(data);
         data += sizeof(uint32_t);
