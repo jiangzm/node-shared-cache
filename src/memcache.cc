@@ -127,7 +127,7 @@ typedef struct cache_s
             {
                 return curr;
             }
-            curr = nexts[curr];
+            curr = node.hash_next;
         }
 
         return 0;
