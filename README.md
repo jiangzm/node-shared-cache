@@ -6,6 +6,8 @@ It supports auto memory-management and fast object serialization. It uses a hash
 
 ## Updates
 
+  - 1.7.2 Fix hash find
+  - 1.7.1 Support Node.JS 14
   - 1.7.0 Only Support Node.JS 12+
   - 1.6.2
     - Add `exchange` method which can be used as atomic lock as well as `increase`
