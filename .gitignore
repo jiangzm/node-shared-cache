@@ -1,3 +1,5 @@
 /build
 *.swp
 node_modules/
+.vscode/
+build/
