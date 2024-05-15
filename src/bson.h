@@ -24,7 +24,7 @@ namespace bson {
         uint8_t*pointer;
     public:
         uint8_t cache[32];
-        BSONValue(v8::Handle<v8::Value> value);
+        BSONValue(v8::Local<v8::Value> value);
         ~BSONValue();
         inline const uint8_t* Data() { return pointer; }
         inline size_t Length () { return length; }

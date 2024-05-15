@@ -1,105 +1,144 @@
-#include<nan.h>
-#include<sys/types.h>
-#include<sys/stat.h>
-#include<fcntl.h>
-#include<errno.h>
-#include<string.h>
+#ifdef _WIN32
+#pragma warning(disable : 4996)
+#endif
+
+#include <nan.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
 #include "memcache.h"
 #include "bson.h"
 
 #ifndef _WIN32
-#include<unistd.h>
-#include<sys/mman.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/file.h>
 #endif
 
 #ifdef _WIN32
-#include<Windows.h>
+#include <Windows.h>
 #endif
 
-
-#define CACHE_HEADER_IN_WORDS   131080
+#define CACHE_HEADER_IN_WORDS 131080
 #define MAX_HANDLES 2048
 #define HANDLE_TO_INT_ERROR 65535
 
 using namespace v8;
 
-#define FATALIF(expr, n, method)    if((expr) == n) {\
-    char sbuf[64];\
-    sprintf(sbuf, __FILE__ ":%d: `%s' failed with code %d", __LINE__, #method, errno);\
-    return Nan::ThrowError(sbuf);\
-}
+#define FATALIF(expr, n, method)                                                           \
+    if ((expr) == n)                                                                       \
+    {                                                                                      \
+        char sbuf[64];                                                                     \
+        sprintf(sbuf, __FILE__ ":%d: `%s' failed with code %d", __LINE__, #method, errno); \
+        return Nan::ThrowError(sbuf);                                                      \
+    }
 
-#define METHOD_SCOPE(holder, ptr, fd) void* ptr = Nan::GetInternalFieldPointer(holder, 0);\
-    HANDLE fd = intToHandle(holder->GetInternalField(1)->Int32Value())
+#define METHOD_SCOPE(holder, ptr, fd)                    \
+    void *ptr = Nan::GetInternalFieldPointer(holder, 0); \
+    HANDLE fd = intToHandle(holder->GetInternalField(1)->Int32Value(Nan::GetCurrentContext()).ToChecked())
 
-#define PROPERTY_SCOPE(property, holder, ptr, fd, keyLen, keyBuf) int keyLen = property->Length();\
-    if(keyLen > 256) {\
-        return Nan::ThrowError("length of property name should not be greater than 256");\
-    }\
-    METHOD_SCOPE(holder, ptr, fd);\
-    if((keyLen << 1) + 32 > 1 << static_cast<uint16_t*>(ptr)[CACHE_HEADER_IN_WORDS]) {\
-        return Nan::ThrowError("length of property name should not be greater than (block size - 32) / 2");\
-    }\
-    uint16_t keyBuf[256];\
-    property->Write(keyBuf)
+#define PROPERTY_SCOPE(property, holder, ptr, fd, keyLen, keyBuf)                                           \
+    int keyLen = property->Length();                                                                        \
+    if (keyLen > 256)                                                                                       \
+    {                                                                                                       \
+        return Nan::ThrowError("length of property name should not be greater than 256");                   \
+    }                                                                                                       \
+    METHOD_SCOPE(holder, ptr, fd);                                                                          \
+    if ((keyLen << 1) + 32 > 1 << static_cast<uint16_t *>(ptr)[CACHE_HEADER_IN_WORDS])                      \
+    {                                                                                                       \
+        return Nan::ThrowError("length of property name should not be greater than (block size - 32) / 2"); \
+    }                                                                                                       \
+    uint16_t keyBuf[256];                                                                                   \
+    property->Write(Nan::GetCurrentContext()->GetIsolate(), keyBuf, 0, -1, 0)
 
 uint32_t handleIdx = 0;
 HANDLE handlers[MAX_HANDLES];
 
-uint32_t handleToInt (HANDLE handle) {
-    if (handleIdx >= MAX_HANDLES) {
+uint32_t handleToInt(HANDLE handle)
+{
+    if (handleIdx >= MAX_HANDLES)
+    {
         return HANDLE_TO_INT_ERROR;
-    } else {
+    }
+    else
+    {
         handlers[handleIdx] = handle;
-        return handleIdx ++;
+        return handleIdx++;
     }
 }
 
-HANDLE intToHandle (uint32_t idx) {
+HANDLE intToHandle(uint32_t idx)
+{
     return handlers[idx];
 }
 
-static NAN_METHOD(release) {
+static NAN_METHOD(release)
+{
 #ifndef _WIN32
-    FATALIF(shm_unlink(*String::Utf8Value(info[0])), -1, shm_unlink);
+    FATALIF(shm_unlink(*Nan::Utf8String(info[0])), -1, shm_unlink);
 #endif
 }
 
-static NAN_METHOD(create) {
-    if(!info.IsConstructCall()) {
+static NAN_METHOD(create)
+{
+    if (!info.IsConstructCall())
+    {
         return Nan::ThrowError("Illegal constructor");
     }
 
-    uint32_t size = info[1]->Uint32Value();
-    uint32_t block_size_shift = info[2]->Uint32Value();
-    if(!block_size_shift || block_size_shift > 31) block_size_shift = 6;
+    uint32_t size = info[1]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+    uint32_t block_size_shift = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+    if (!block_size_shift || block_size_shift > 31)
+        block_size_shift = 6;
 
     uint32_t blocks = size >> (5 + block_size_shift) << 5; // 32 aligned
     size = blocks << block_size_shift;
 
-    if(block_size_shift < 6) {
+    if (block_size_shift < 6)
+    {
         return Nan::ThrowError("block size should not be smaller than 64 bytes");
-    } else if(block_size_shift > 14) {
+    }
+    else if (block_size_shift > 14)
+    {
         return Nan::ThrowError("block size should not be larger than 16 KB");
-    }else if(size < 524288) {
+    }
+    else if (size < 524288)
+    {
         return Nan::ThrowError("total_size should be larger than 512 KB");
     }
 
     // fprintf(stderr, "allocating %d bytes memory\n", size);
 
     HANDLE fd;
-    void* ptr;
+    void *ptr;
     bool forced = false;
     Nan::Utf8String name(info[0]);
 
 #ifndef _WIN32
+    HANDLE xfd;
+    char *xname = (char *)malloc(sizeof(char) * 256);
+    sprintf(xname, "%s.lock", *name);
+    FATALIF(xfd = shm_open(xname, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR), -1, shm_open);
+    if (flock(xfd, LOCK_EX | LOCK_NB) == 0)
+    {
+        shm_unlink(*name);
+    }
+    flock(xfd, LOCK_SH);
+    free(xname);
+
     FATALIF(fd = shm_open(*name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR), -1, shm_open);
+
     struct stat stat;
     FATALIF(fstat(fd, &stat), -1, fstat);
 
-    if(stat.st_size == 0) {
-        FATALIF(ftruncate(fd, size), -1, ftruncate);        
-    } else if(stat.st_size != size) {
+    if (stat.st_size == 0)
+    {
+        FATALIF(ftruncate(fd, size), -1, ftruncate);
+    }
+    else if (stat.st_size != size)
+    {
         return Nan::ThrowError("cache initialized with different size");
     }
 
@@ -107,9 +146,10 @@ static NAN_METHOD(create) {
     forced = stat.st_size == 0;
 #else
     // create/open the file mapping
-    HANDLE hnd = OpenFileMapping(FILE_MAP_ALL_ACCESS, FALSE, *name);
-    if (!hnd) {
-        FATALIF(hnd = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, size, *name), NULL, CreateFileMapping);
+    HANDLE hnd = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, *name);
+    if (!hnd)
+    {
+        FATALIF(hnd = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, size, *name), NULL, CreateFileMapping);
         forced = true;
     }
 
@@ -119,17 +159,23 @@ static NAN_METHOD(create) {
     // create a mutex for synchronization
     char mutexName[64];
     sprintf(mutexName, "mutex:%s", *name);
-    fd = CreateMutex(NULL, FALSE, mutexName);
-    if (!fd) {
-        if (GetLastError() == ERROR_ALREADY_EXISTS) {
-            FATALIF(fd = OpenMutex(SYNCHRONIZE, FALSE, mutexName), NULL, OpenMutex);
-        } else {
+    fd = CreateMutexA(NULL, false, mutexName);
+    if (!fd)
+    {
+        if (GetLastError() == ERROR_ALREADY_EXISTS)
+        {
+            FATALIF(fd = OpenMutexA(SYNCHRONIZE, false, mutexName), NULL, OpenMutexA);
+        }
+        else
+        {
             Nan::ThrowError("can't create mutex");
         }
     }
+    // fprintf(stderr, "mutexName=%s fd=%p\n", mutexName, fd);
 #endif
 
-    if (cache::init(ptr, blocks, block_size_shift, forced)) {
+    if (cache::init(ptr, blocks, block_size_shift, forced))
+    {
         Nan::SetInternalFieldPointer(info.Holder(), 0, ptr);
 #ifdef __MACH__
         char sbuf[64];
@@ -138,30 +184,34 @@ static NAN_METHOD(create) {
 #endif
 
         uint32_t fdInt = handleToInt(fd);
-        if (fdInt == HANDLE_TO_INT_ERROR){
-           Nan::ThrowError("max mutex exceed");
+        if (fdInt == HANDLE_TO_INT_ERROR)
+        {
+            Nan::ThrowError("max mutex exceed");
         }
         info.Holder()->SetInternalField(1, Nan::New(fdInt));
     }
-    else {
+    else
+    {
         Nan::ThrowError("cache initialization failed, maybe it has been initialized with different block size");
     }
 }
 
-static NAN_PROPERTY_GETTER(getter) {
+static NAN_PROPERTY_GETTER(getter)
+{
     PROPERTY_SCOPE(property, info.Holder(), ptr, fd, keyLen, keyBuf);
 
     bson::BSONParser parser;
 
     cache::get(ptr, fd, keyBuf, keyLen, parser.val, parser.valLen);
 
-    if(parser.val) {
+    if (parser.val)
+    {
         info.GetReturnValue().Set(parser.parse());
     }
-
 }
 
-static NAN_PROPERTY_SETTER(setter) {
+static NAN_PROPERTY_SETTER(setter)
+{
     PROPERTY_SCOPE(property, info.Holder(), ptr, fd, keyLen, keyBuf);
 
     bson::BSONValue bsonValue(value);
@@ -170,19 +220,22 @@ static NAN_PROPERTY_SETTER(setter) {
     info.GetReturnValue().Set(value);
 }
 
-class KeysEnumerator {
+class KeysEnumerator
+{
 public:
     uint32_t length;
     Local<Array> keys;
 
-    static void next(KeysEnumerator* self, uint16_t* key, size_t keyLen) {
-        self->keys->Set(self->length++, Nan::New<String>(key, keyLen).ToLocalChecked());
+    static void next(KeysEnumerator *self, uint16_t *key, size_t keyLen)
+    {
+        Nan::Set(self->keys, self->length++, Nan::New<String>(key, keyLen).ToLocalChecked());
     }
 
     inline KeysEnumerator() : length(0), keys(Nan::New<Array>()) {}
 };
 
-static NAN_PROPERTY_ENUMERATOR(enumerator) {
+static NAN_PROPERTY_ENUMERATOR(enumerator)
+{
     METHOD_SCOPE(info.Holder(), ptr, fd);
     // fprintf(stderr, "enumerating properties %x\n", ptr);
 
@@ -192,109 +245,125 @@ static NAN_PROPERTY_ENUMERATOR(enumerator) {
     info.GetReturnValue().Set(enumerator.keys);
 }
 
-static NAN_PROPERTY_DELETER(deleter) {
+static NAN_PROPERTY_DELETER(deleter)
+{
     PROPERTY_SCOPE(property, info.Holder(), ptr, fd, keyLen, keyBuf);
 
     info.GetReturnValue().Set(cache::unset(ptr, fd, keyBuf, keyLen));
 }
 
-static NAN_PROPERTY_QUERY(querier) {
+static NAN_PROPERTY_QUERY(querier)
+{
     PROPERTY_SCOPE(property, info.Holder(), ptr, fd, keyLen, keyBuf);
-    if(cache::contains(ptr, fd, keyBuf, keyLen)) {
+    if (cache::contains(ptr, fd, keyBuf, keyLen))
+    {
         info.GetReturnValue().Set(0);
     }
 }
 
 // increase(holder, key, [by])
-static NAN_METHOD(increase) {
+static NAN_METHOD(increase)
+{
     Local<Object> holder = Local<Object>::Cast(info[0]);
-    PROPERTY_SCOPE(info[1]->ToString(), holder, ptr, fd, keyLen, keyBuf);
-    uint32_t increase_by = info.Length() > 2 ? info[2]->Uint32Value() : 1;
+    PROPERTY_SCOPE(info[1]->ToString(Nan::GetCurrentContext()).ToLocalChecked(), holder, ptr, fd, keyLen, keyBuf);
+    uint32_t increase_by = info.Length() > 2 ? info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked() : 1;
     info.GetReturnValue().Set(cache::increase(ptr, fd, keyBuf, keyLen, increase_by));
 }
 
 // exchange(holder, key, val)
 // exchanges current key with new value, the old value is returned
-static NAN_METHOD(exchange) {
+static NAN_METHOD(exchange)
+{
     Local<Object> holder = Local<Object>::Cast(info[0]);
-    PROPERTY_SCOPE(info[1]->ToString(), holder, ptr, fd, keyLen, keyBuf);
+    PROPERTY_SCOPE(info[1]->ToString(Nan::GetCurrentContext()).ToLocalChecked(), holder, ptr, fd, keyLen, keyBuf);
 
     bson::BSONValue bsonValue(info[2]);
 
     bson::BSONParser parser;
     FATALIF(cache::set(ptr, fd, keyBuf, keyLen, bsonValue.Data(), bsonValue.Length(), &parser.val, &parser.valLen), -1, cache::exchange);
 
-    if(parser.val) {
+    if (parser.val)
+    {
         info.GetReturnValue().Set(parser.parse());
     }
 }
 
 // fastGet(instance, key)
-static NAN_METHOD(fastGet) {
+static NAN_METHOD(fastGet)
+{
     Local<Object> holder = Local<Object>::Cast(info[0]);
-    PROPERTY_SCOPE(info[1]->ToString(), holder, ptr, fd, keyLen, keyBuf);
+    PROPERTY_SCOPE(info[1]->ToString(Nan::GetCurrentContext()).ToLocalChecked(), holder, ptr, fd, keyLen, keyBuf);
 
     bson::BSONParser parser;
 
     cache::fast_get(ptr, fd, keyBuf, keyLen, parser.val, parser.valLen);
 
-    if(parser.val) {
+    if (parser.val)
+    {
         info.GetReturnValue().Set(parser.parse());
     }
 }
 
-class EntriesDumper {
+class EntriesDumper
+{
 public:
     Local<Object> entries;
     uint16_t key[256];
     size_t keyLen;
 
-    static void next(EntriesDumper* self, uint16_t* key, size_t keyLen, uint8_t* val) {
-        if(self->keyLen) {
-            if(self->keyLen > keyLen || memcmp(self->key, key, self->keyLen << 1)) return;
+    static void next(EntriesDumper *self, uint16_t *key, size_t keyLen, uint8_t *val)
+    {
+        if (self->keyLen)
+        {
+            if (self->keyLen > keyLen || memcmp(self->key, key, self->keyLen << 1))
+                return;
         }
-        self->entries->Set(Nan::New<String>(key, keyLen).ToLocalChecked(), bson::parse(val));
+        Nan::Set(self->entries, Nan::New<String>(key, keyLen).ToLocalChecked(), bson::parse(val));
     }
 
-    inline  EntriesDumper() : entries(Nan::New<Object>()), keyLen(0) {}
+    inline EntriesDumper() : entries(Nan::New<Object>()), keyLen(0) {}
 };
 
-static NAN_METHOD(dump) {
+static NAN_METHOD(dump)
+{
     Local<Object> holder = Local<Object>::Cast(info[0]);
     METHOD_SCOPE(holder, ptr, fd);
     EntriesDumper dumper;
 
-    if(info.Length() > 1 && info[1]->BooleanValue()) {
-        Local<String> prefix = info[1]->ToString();
+    if (info.Length() > 1 && info[1]->BooleanValue(Nan::GetCurrentContext()->GetIsolate()))
+    {
+        Local<String> prefix = info[1]->ToString(Nan::GetCurrentContext()).ToLocalChecked();
         int keyLen = prefix->Length();
-        if(keyLen > 256) {
+        if (keyLen > 256)
+        {
             info.GetReturnValue().Set(dumper.entries);
             return;
         }
 
-        prefix->Write(dumper.key);
+        prefix->Write(Nan::GetCurrentContext()->GetIsolate(), dumper.key, 0, -1, 0);
         dumper.keyLen = keyLen;
     }
-
 
     cache::dump(ptr, fd, &dumper, EntriesDumper::next);
     info.GetReturnValue().Set(dumper.entries);
 }
 
-static NAN_METHOD(clear) {
+static NAN_METHOD(clear)
+{
     Local<Object> holder = Local<Object>::Cast(info[0]);
     METHOD_SCOPE(holder, ptr, fd);
     cache::clear(ptr, fd);
 }
 
-void init(Handle<Object> exports) {
+void init(Local<Object> exports)
+{
 
     Local<FunctionTemplate> constructor = Nan::New<FunctionTemplate>(create);
     Local<ObjectTemplate> inst = constructor->InstanceTemplate();
     inst->SetInternalFieldCount(2); // ptr, fd (synchronization object)
     Nan::SetNamedPropertyHandler(inst, getter, setter, querier, deleter, enumerator);
-    
-    Nan::Set(exports, Nan::New("Cache").ToLocalChecked(), constructor->GetFunction());
+
+    Nan::Set(exports, Nan::New("Cache").ToLocalChecked(), constructor->GetFunction(Nan::GetCurrentContext()).ToLocalChecked());
     Nan::SetMethod(exports, "release", release);
     Nan::SetMethod(exports, "increase", increase);
     Nan::SetMethod(exports, "exchange", exchange);
@@ -303,5 +372,7 @@ void init(Handle<Object> exports) {
     Nan::SetMethod(exports, "dump", dump);
 }
 
-
-NODE_MODULE(binding, init)
+NODE_MODULE_INIT()
+{
+    init(exports);
+}
